@@ -1,3 +1,9 @@
+sendDriver
+receiveDriver
+
+# Emacs
+*~
+
 # Object files
 *.o
 *.ko
