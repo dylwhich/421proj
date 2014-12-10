@@ -1,0 +1,323 @@
+diff --git a/Makefile b/Makefile
+index f5cdb72..0e860ac 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ VERSION = 2
+ PATCHLEVEL = 6
+ SUBLEVEL = 32
+-EXTRAVERSION =
++EXTRAVERSION = -dylwhich-dylan-cs421project1
+ NAME = Man-Eating Seals of Antiquity
+ 
+ # *DOCUMENTATION*
+@@ -644,7 +644,7 @@ export mod_strip_cmd
+ 
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ mm/ fs/ ipc/ security/ crypto/ block/ cmsc421Prj1/
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+diff --git a/arch/x86/ia32/ia32entry.S b/arch/x86/ia32/ia32entry.S
+index 581b056..3dcbb07 100644
+--- a/arch/x86/ia32/ia32entry.S
++++ b/arch/x86/ia32/ia32entry.S
+@@ -841,4 +841,9 @@ ia32_sys_call_table:
+ 	.quad compat_sys_pwritev
+ 	.quad compat_sys_rt_tgsigqueueinfo	/* 335 */
+ 	.quad sys_perf_event_open
++	.quad sys_mkMbox421
++	.quad sys_rmMbox421
++	.quad sys_sendMsg421
++	.quad sys_receiveMsg421
++	.quad sys_countMsg421
+ ia32_syscall_end:
+diff --git a/arch/x86/include/asm/unistd_32.h b/arch/x86/include/asm/unistd_32.h
+index 6fb3c20..e1d5750 100644
+--- a/arch/x86/include/asm/unistd_32.h
++++ b/arch/x86/include/asm/unistd_32.h
+@@ -342,10 +342,15 @@
+ #define __NR_pwritev		334
+ #define __NR_rt_tgsigqueueinfo	335
+ #define __NR_perf_event_open	336
++#define __NR_mkMbox421          337
++#define __NR_rmMbox421          338
++#define __NR_sendMsg421         339
++#define __NR_receiveMsg421      340
++#define __NR_countMsg421        341
+ 
+ #ifdef __KERNEL__
+ 
+-#define NR_syscalls 337
++#define NR_syscalls 342
+ 
+ #define __ARCH_WANT_IPC_PARSE_VERSION
+ #define __ARCH_WANT_OLD_READDIR
+diff --git a/arch/x86/kernel/syscall_table_32.S b/arch/x86/kernel/syscall_table_32.S
+index 0157cd2..0dc2318 100644
+--- a/arch/x86/kernel/syscall_table_32.S
++++ b/arch/x86/kernel/syscall_table_32.S
+@@ -336,3 +336,8 @@ ENTRY(sys_call_table)
+ 	.long sys_pwritev
+ 	.long sys_rt_tgsigqueueinfo	/* 335 */
+ 	.long sys_perf_event_open
++	.long sys_mkMbox421
++	.long sys_rmMbox421
++	.long sys_sendMsg421
++	.long sys_receiveMsg421
++	.long sys_countMsg421
+\ No newline at end of file
+diff --git a/cmsc421Prj1/Makefile b/cmsc421Prj1/Makefile
+new file mode 100644
+index 0000000..81af6b2
+--- /dev/null
++++ b/cmsc421Prj1/Makefile
+@@ -0,0 +1 @@
++obj-y := mbox421.o
+\ No newline at end of file
+diff --git a/cmsc421Prj1/mbox421.c b/cmsc421Prj1/mbox421.c
+new file mode 100644
+index 0000000..b90955d
+--- /dev/null
++++ b/cmsc421Prj1/mbox421.c
+@@ -0,0 +1,163 @@
++#include "mbox421.h"
++#include <linux/syscalls.h>
++#include <linux/uaccess.h>
++#include <linux/semaphore.h>
++
++static struct MBox421 mailbox;
++
++struct Message421 *mailbox_next_message(struct MBox421 *this) {
++  if (this->count < MBOX421_MSG_COUNT) {
++    return (this->messages + ((this->head + this->count++) % MBOX421_MSG_COUNT));
++  } else {
++    return NULL;
++  }
++}
++
++struct Message421 *mailbox_first_message(struct MBox421 *this, unsigned char remove) {
++  struct Message421 *result = NULL;
++  if (this->count > 0) {
++    result = &(this->messages[this->head]);
++    if (remove) {
++      this->count--;
++      this->head = (this->head + 1) % MBOX421_MSG_COUNT;
++    }
++  }
++  return result;
++}
++
++long mailbox_lock(struct MBox421 *this) {
++  printk("mailbox_lock: Locking mailbox...\n");
++  if (down_interruptible(&this->lock)) {
++    printk("mailbox_lock: FAILED TO LOCK MAILBOX\n");
++    return 0;
++  } else {
++    printk("mailbox_lock: > MAILBOX LOCKED\n");
++    return 1;
++  }
++}
++
++void mailbox_unlock(struct MBox421 *this) {
++  printk("mailbox_lock: Unlocking mailbox...\n");
++  up(&this->lock);
++  printk("mailbox_unlock: < MAILBOX UNLOCKED\n");
++}
++
++asmlinkage long sys_mkMbox421() {
++  printk("sys_mkMbox421()\n");
++
++  mailbox_lock(&mailbox);
++
++  if (!mailbox.initialized) {
++    printk("sys_mkMbox421: initializing\n");
++    mailbox.head = 0;
++    mailbox.count = 0;
++    mailbox.initialized = 1;
++  } else {
++    printk("sys_mkMbox421: Already initilaized\n");
++  }
++
++  mailbox_unlock(&mailbox);
++  return 0;
++}
++
++asmlinkage long sys_rmMbox421() {
++  long retval = 0;
++
++  printk("sys_rmMbox421()\n");
++
++  mailbox_lock(&mailbox);
++  /* Throw an error if the mailbox isn't initialized */
++  if (mailbox.initialized) {
++    printk("sys_rmMbox421: mailbox is initialized\n");
++
++    /* Throw an error if the mailbox isn't empty */
++    if (mailbox.count == 0) {
++      printk("sys_rmMbox421: mailbox is empty\n");
++      printk("sys_rmMbox421: de-initializing\n");
++      mailbox.initialized = 0;
++    } else {
++      printk("sys_rmMbox421: mailbox is NOT empty\n");
++      retval = ERR421_NOT_EMPTY;
++    }
++  } else {
++    printk("sys_rmMbox421: mailbox is NOT initialized\n");
++    retval = ERR421_NOT_INITIALIZED;
++  }
++
++  mailbox_unlock(&mailbox);
++  return retval;
++}
++
++asmlinkage long sys_sendMsg421(char *msg, unsigned long N) {
++  struct Message421 *next;
++  long copied = 0;
++  mailbox_lock(&mailbox);
++  printk("sys_sendMsg421(%s, %lu)\n", msg, N);
++
++  if (access_ok(VERIFY_READ, msg, N)) {
++    printk("sys_sendMsg421: access_ok\n");
++    
++    next = mailbox_next_message(&mailbox);
++
++    if (next != NULL) {
++      copied = strncpy_from_user(next->contents, msg,  MBOX421_MSG_LENGTH);
++      if (copied == -EFAULT) {
++	printk("sys_sendMsg421: strncpy_from_user returned EFAULT\n");
++      } else {
++	if (N > MBOX421_MSG_LENGTH) {
++	  next->contents[MBOX421_MSG_LENGTH-1] = '\0';
++	} else {
++	  next->contents[N] = '\0';
++	}
++	printk("sys_sendMsg421: strncpy_from_user returned %ld\n", copied);
++      }
++    } else {
++      copied = ERR421_FULL;
++    }
++  } else {
++    printk("sys_sendMsg421: access_ok FAILED\n");
++    copied = 0;
++  }
++  mailbox_unlock(&mailbox);
++  return copied;
++}
++
++asmlinkage long sys_receiveMsg421(char *msg, unsigned long N, unsigned char flag) {
++  struct Message421 *first_msg;
++  long msg_len;
++  mailbox_lock(&mailbox);
++  printk("sys_receiveMsg421(msg, %lu, %u)\n", N, flag);
++
++  first_msg = mailbox_first_message(&mailbox, flag);
++  if (first_msg != NULL) {
++    printk("sys_receiveMsg421: first msg is %s\n", first_msg->contents);
++    if (access_ok(VERIFY_WRITE, msg, N)) {
++      printk("sys_receiveMsg421: access_ok\n");
++      msg_len = strlen(first_msg->contents);
++      copy_to_user(msg, first_msg->contents, N > msg_len ? msg_len : N);
++    } else {
++      printk("sys_receiveMsg421: access_ok FAILED\n");
++    }
++  } else {
++    printk("sys_receiveMsg421: first msg is NULL\n");
++  }
++
++  mailbox_unlock(&mailbox);
++  return 0;
++}
++
++asmlinkage long sys_countMsg421() {
++  long result = 0;
++  printk("sys_countMsg421()\n");
++  mailbox_lock(&mailbox);
++  result = mailbox.count;
++  mailbox_unlock(&mailbox);
++  return result;
++}
++
++void __init mbox421_init(void) {
++  mailbox.head = 0;
++  mailbox.count = 0;
++  mailbox.initialized = 0;
++  init_MUTEX(&mailbox.lock);
++}
+diff --git a/cmsc421Prj1/mbox421.h b/cmsc421Prj1/mbox421.h
+new file mode 100644
+index 0000000..965fabc
+--- /dev/null
++++ b/cmsc421Prj1/mbox421.h
+@@ -0,0 +1,32 @@
++#ifndef MBOX421_H
++#define MBOX421_H
++
++#include <linux/semaphore.h>
++
++#define ERR421_NOT_INITIALIZED -1
++#define ERR421_NOT_EMPTY -2
++#define ERR421_FULL -3
++
++#define MBOX421_MSG_LENGTH 512
++#define MBOX421_MSG_COUNT 128
++
++struct Message421 {
++  char contents[MBOX421_MSG_LENGTH];
++};
++
++struct MBox421 {
++  unsigned char initialized;
++  unsigned char head;
++  unsigned char count;
++  struct semaphore lock;
++  struct Message421 messages[MBOX421_MSG_COUNT];
++};
++
++struct Message421 *mailbox_next_message(struct MBox421 *this);
++struct Message421 *mailbox_first_message(struct MBox421 *this, unsigned char rm);
++long mailbox_lock(struct MBox421 *this);
++void mailbox_unlock(struct MBox421 *this);
++
++void __init mbox421_init(void);
++
++#endif
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index a990ace..eda4e6e 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -872,6 +872,11 @@ asmlinkage long sys_pselect6(int, fd_set __user *, fd_set __user *,
+ asmlinkage long sys_ppoll(struct pollfd __user *, unsigned int,
+ 			  struct timespec __user *, const sigset_t __user *,
+ 			  size_t);
++asmlinkage long sys_mkMbox421(void);
++asmlinkage long sys_rmMbox421(void);
++asmlinkage long sys_sendMsg421(char *msg, unsigned long N);
++asmlinkage long sys_receiveMsg421(char *msg, unsigned long N, unsigned char flag);
++asmlinkage long sys_countMsg421(void);
+ 
+ int kernel_execve(const char *filename, char *const argv[], char *const envp[]);
+ 
+diff --git a/init/main.c b/init/main.c
+index 4051d75..e027254 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -90,6 +90,7 @@ extern void sbus_init(void);
+ extern void prio_tree_init(void);
+ extern void radix_tree_init(void);
+ extern void free_initmem(void);
++extern void mbox421_init(void);
+ #ifndef CONFIG_DEBUG_RODATA
+ static inline void mark_rodata_ro(void) { }
+ #endif
+@@ -683,6 +684,8 @@ asmlinkage void __init start_kernel(void)
+ 
+ 	ftrace_init();
+ 
++	mbox421_init();
++
+ 	/* Do the rest non-__init'ed, we're now alive */
+ 	rest_init();
+ }

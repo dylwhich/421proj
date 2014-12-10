@@ -1,0 +1,16 @@
+Dylan Whichard
+Project 1
+
+CMSC 421
+Dr. Kalpakis
+Fall 2014
+
+# Layout #
+
+The modified kernel files are in this directory. The driver programs
+are contained in ./driver . The source code and makefile for the
+system calls is located in ./src .
+
+# Building the Driver #
+cd ./driver
+make
